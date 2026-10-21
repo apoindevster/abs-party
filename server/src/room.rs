@@ -10,6 +10,7 @@ pub struct Participant {
     pub name: String,
     pub abs_token: String,
     pub abs_username: String,
+    pub resume_key: Option<Uuid>,
     pub tx: mpsc::UnboundedSender<ServerMessage>,
 }
 
@@ -29,6 +30,7 @@ pub struct Room {
     pub participants: Vec<Participant>,
     pub play_started_at: Option<Instant>,
     pub ready_check: Option<ReadyCheck>,
+    pub disconnected: HashSet<Uuid>,
 }
 
 impl Room {
@@ -43,6 +45,7 @@ impl Room {
             participants: vec![host],
             play_started_at: None,
             ready_check: None,
+            disconnected: HashSet::new(),
         }
     }
 
@@ -91,6 +94,7 @@ impl Room {
     }
 
     pub fn remove_participant(&mut self, id: Uuid) -> Option<String> {
+        self.disconnected.remove(&id);
         if let Some(pos) = self.participants.iter().position(|p| p.id == id) {
             let name = self.participants.remove(pos).name;
             // Transfer host if needed
@@ -120,6 +124,7 @@ impl Room {
     pub fn state_message(&self) -> ServerMessage {
         ServerMessage::RoomState {
             room_id: self.id.clone(),
+            created: false,
             item: self.item.clone(),
             position: self.estimated_position(),
             playing: self.playing,
@@ -149,7 +154,7 @@ pub(crate) mod test_helpers {
     pub fn make_participant(name: &str) -> (Participant, mpsc::UnboundedReceiver<ServerMessage>) {
         let (tx, rx) = mpsc::unbounded_channel();
         (
-            Participant { id: Uuid::new_v4(), name: name.into(), abs_token: "tok".into(), abs_username: name.into(), tx },
+            Participant { id: Uuid::new_v4(), name: name.into(), abs_token: "tok".into(), abs_username: name.into(), resume_key: None, tx },
             rx,
         )
     }

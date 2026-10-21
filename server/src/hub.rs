@@ -57,6 +57,34 @@ pub async fn join_room(
     let name = participant.name.clone();
     let tx = participant.tx.clone();
 
+    // A validated ABS account may reclaim a disconnected seat, or replace its own
+    // half-open connection using its private resume key. Other active duplicate
+    // logins remain rejected. Replacing the ID makes old expiry timers harmless.
+    if let Some(index) = room.participants.iter().position(|p| p.abs_username == participant.abs_username) {
+        let old_id = room.participants[index].id;
+        let same_connection = participant.resume_key.is_some()
+            && participant.resume_key == room.participants[index].resume_key;
+        if room.disconnected.contains(&old_id) || same_connection {
+            room.disconnected.remove(&old_id);
+            if let Some(check) = &mut room.ready_check {
+                if check.expected.remove(&old_id) { check.expected.insert(participant.id); }
+                check.ready.remove(&old_id);
+            }
+            if room.host_id == old_id {
+                room.host_id = participant.id;
+            }
+            room.participants[index] = participant;
+            let _ = tx.send(room.state_message());
+            if let Some(check) = &room.ready_check {
+                let _ = tx.send(ServerMessage::PlayIntent {
+                    position: check.position,
+                    sender_name: String::new(),
+                });
+            }
+            return Ok(());
+        }
+    }
+
     if room.participants.iter().any(|p| p.name == name) {
         let _ = tx.send(ServerMessage::Error {
             message: "Username already in this room".into(),
@@ -100,13 +128,16 @@ pub async fn handle_play_intent(rooms: &RoomMap, room_id: &str, sender_id: Uuid,
     if !position.is_finite() || position < 0.0 { return; }
     if let Some(arc) = rooms.get(room_id).map(|r| r.clone()) {
         let mut room = arc.lock().await;
+        if !room.participants.iter().any(|p| p.id == sender_id) { return; }
         let sender_name = room.participants.iter()
             .find(|p| p.id == sender_id)
             .map(|p| p.name.clone())
             .unwrap_or_default();
         room.pause_now();
         room.position = position;
-        let expected: HashSet<Uuid> = room.participants.iter().map(|p| p.id).collect();
+        let expected: HashSet<Uuid> = room.participants.iter()
+            .filter(|p| !room.disconnected.contains(&p.id))
+            .map(|p| p.id).collect();
         room.ready_check = Some(ReadyCheck { position, expected, ready: HashSet::new() });
         // Broadcast to ALL participants (including sender) so everyone starts buffering
         room.broadcast(&ServerMessage::PlayIntent { position, sender_name });
@@ -116,6 +147,7 @@ pub async fn handle_play_intent(rooms: &RoomMap, room_id: &str, sender_id: Uuid,
 pub async fn handle_ready(rooms: &RoomMap, room_id: &str, sender_id: Uuid) {
     if let Some(arc) = rooms.get(room_id).map(|r| r.clone()) {
         let mut room = arc.lock().await;
+        if !room.participants.iter().any(|p| p.id == sender_id) { return; }
         let fire_play = if room.ready_check.is_some() {
             let check = room.ready_check.as_mut().unwrap();
             check.ready.insert(sender_id);
@@ -142,6 +174,7 @@ pub async fn handle_pause(rooms: &RoomMap, room_id: &str, sender_id: Uuid, posit
     if !position.is_finite() || position < 0.0 { return; }
     if let Some(arc) = rooms.get(room_id).map(|r| r.clone()) {
         let mut room = arc.lock().await;
+        if !room.participants.iter().any(|p| p.id == sender_id) { return; }
         let sender_name = room.participants.iter()
             .find(|p| p.id == sender_id)
             .map(|p| p.name.clone())
@@ -159,12 +192,13 @@ pub async fn handle_seek(rooms: &RoomMap, room_id: &str, sender_id: Uuid, positi
     if !position.is_finite() || position < 0.0 { return; }
     if let Some(arc) = rooms.get(room_id).map(|r| r.clone()) {
         let mut room = arc.lock().await;
+        if !room.participants.iter().any(|p| p.id == sender_id) { return; }
         let sender_name = room.participants.iter()
             .find(|p| p.id == sender_id)
             .map(|p| p.name.clone())
             .unwrap_or_default();
         room.position = position;
-        room.play_started_at = None;
+        room.play_started_at = if room.playing { Some(Instant::now()) } else { None };
         room.ready_check = None;
         let msg = ServerMessage::Seek { position, sender_name };
         room.broadcast_except(sender_id, &msg);
@@ -182,10 +216,32 @@ pub async fn handle_speed(rooms: &RoomMap, room_id: &str, sender_id: Uuid, rate:
             .find(|p| p.id == sender_id)
             .map(|p| p.name.clone())
             .unwrap_or_default();
+        room.position = room.estimated_position();
+        room.play_started_at = if room.playing { Some(Instant::now()) } else { None };
         room.speed = rate;
         let msg = ServerMessage::Speed { rate, sender_name };
         room.broadcast_except(sender_id, &msg);
     }
+}
+
+/// Keep a disconnected listener's seat and the playback clock for a short grace period.
+pub async fn disconnect_room(rooms: &RoomMap, room_id: &str, participant_id: Uuid) {
+    if let Some(arc) = rooms.get(room_id).map(|r| r.clone()) {
+        let mut room = arc.lock().await;
+        if !room.participants.iter().any(|p| p.id == participant_id) { return; }
+        room.disconnected.insert(participant_id);
+        if let Some(check) = &mut room.ready_check {
+            check.expected.remove(&participant_id);
+        }
+    }
+    // Reuse the readiness check so a lost connection cannot hold up the group.
+    handle_ready(rooms, room_id, participant_id).await;
+}
+
+pub async fn expire_disconnect(rooms: &RoomMap, room_id: &str, participant_id: Uuid) {
+    // Reconnection installs a new participant ID. leave_room is a no-op for the
+    // old ID, including when an old room has been replaced under the same code.
+    leave_room(rooms, room_id, participant_id).await;
 }
 
 pub async fn leave_room(rooms: &RoomMap, room_id: &str, participant_id: Uuid) {
@@ -428,4 +484,117 @@ mod tests {
         let msg = host_rx.recv().await.unwrap();
         assert!(matches!(msg, ServerMessage::ParticipantLeft { name } if name == "Bob"));
     }
+
+    #[tokio::test]
+    async fn reconnect_preserves_playback_host_and_survives_old_expiry() {
+        let rooms = new_room_map();
+        let (host, mut host_rx) = make_participant("Alice");
+        let old_id = host.id;
+        create_room(&rooms, "mobile01".into(), make_item(), host).await.unwrap();
+        handle_play_intent(&rooms, "mobile01", old_id, 100.0).await;
+        handle_ready(&rooms, "mobile01", old_id).await;
+        while host_rx.try_recv().is_ok() {}
+        disconnect_room(&rooms, "mobile01", old_id).await;
+        assert!(host_rx.try_recv().is_err()); // no pause or leave during grace
+
+        let (replacement, mut rx) = make_participant("Alice");
+        let new_id = replacement.id;
+        join_room(&rooms, "mobile01", replacement).await.unwrap();
+        assert!(matches!(rx.try_recv().unwrap(), ServerMessage::RoomState {
+            playing: true, position, ..
+        } if position >= 100.0));
+        expire_disconnect(&rooms, "mobile01", old_id).await;
+        let arc = rooms.get("mobile01").unwrap().clone();
+        let room = arc.lock().await;
+        assert!(room.playing);
+        assert_eq!(room.host_id, new_id);
+        assert_eq!(room.participants.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn active_duplicate_username_is_still_rejected() {
+        let rooms = new_room_map();
+        let (host, _rx) = make_participant("Alice");
+        create_room(&rooms, "mobile01".into(), make_item(), host).await.unwrap();
+        let (duplicate, _rx) = make_participant("Alice");
+        assert!(join_room(&rooms, "mobile01", duplicate).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn disconnect_during_buffering_does_not_hold_up_other_listeners() {
+        let rooms = new_room_map();
+        let (host, _rx) = make_participant("Alice");
+        let host_id = host.id;
+        create_room(&rooms, "mobile01".into(), make_item(), host).await.unwrap();
+        let (guest, _rx) = make_participant("Bob");
+        let guest_id = guest.id;
+        join_room(&rooms, "mobile01", guest).await.unwrap();
+        handle_play_intent(&rooms, "mobile01", host_id, 50.0).await;
+        handle_ready(&rooms, "mobile01", host_id).await;
+        disconnect_room(&rooms, "mobile01", guest_id).await;
+        let arc = rooms.get("mobile01").unwrap().clone();
+        assert!(arc.lock().await.playing);
+    }
+
+    #[tokio::test]
+    async fn expired_disconnect_retains_existing_leave_behavior() {
+        let rooms = new_room_map();
+        let (host, _rx) = make_participant("Alice");
+        let host_id = host.id;
+        create_room(&rooms, "mobile01".into(), make_item(), host).await.unwrap();
+        disconnect_room(&rooms, "mobile01", host_id).await;
+        assert!(rooms.contains_key("mobile01"));
+        expire_disconnect(&rooms, "mobile01", host_id).await;
+        assert!(!rooms.contains_key("mobile01"));
+    }
+
+    #[tokio::test]
+    async fn seeking_and_speed_changes_preserve_a_running_room_clock() {
+        let rooms = new_room_map();
+        let (host, _rx) = make_participant("Alice");
+        let host_id = host.id;
+        create_room(&rooms, "mobile01".into(), make_item(), host).await.unwrap();
+        handle_play_intent(&rooms, "mobile01", host_id, 100.0).await;
+        handle_ready(&rooms, "mobile01", host_id).await;
+        handle_seek(&rooms, "mobile01", host_id, 200.0).await;
+        let arc = rooms.get("mobile01").unwrap().clone();
+        {
+            let mut room = arc.lock().await;
+            assert!(room.play_started_at.is_some());
+            room.play_started_at = Some(Instant::now() - std::time::Duration::from_secs(10));
+        }
+        handle_speed(&rooms, "mobile01", host_id, 2.0).await;
+        let room = arc.lock().await;
+        assert!((room.position - 210.0).abs() < 1.0);
+        assert_eq!(room.speed, 2.0);
+        assert!(room.play_started_at.is_some());
+    }
+
+
+    #[tokio::test]
+    async fn resume_key_replaces_half_open_socket_but_rejects_stale_commands() {
+        let rooms = new_room_map();
+        let key = Uuid::new_v4();
+        let (mut host, _rx) = make_participant("Alice");
+        host.resume_key = Some(key);
+        let old_id = host.id;
+        create_room(&rooms, "mobile01".into(), make_item(), host).await.unwrap();
+        let (mut replacement, mut rx) = make_participant("Alice");
+        replacement.resume_key = Some(key);
+        let new_id = replacement.id;
+        join_room(&rooms, "mobile01", replacement).await.unwrap();
+        assert!(matches!(rx.try_recv().unwrap(), ServerMessage::RoomState { .. }));
+        handle_play_intent(&rooms, "mobile01", new_id, 50.0).await;
+        handle_ready(&rooms, "mobile01", new_id).await;
+        handle_pause(&rooms, "mobile01", old_id, 1.0).await;
+        handle_seek(&rooms, "mobile01", old_id, 1.0).await;
+        disconnect_room(&rooms, "mobile01", old_id).await;
+        expire_disconnect(&rooms, "mobile01", old_id).await;
+        let arc = rooms.get("mobile01").unwrap().clone();
+        let room = arc.lock().await;
+        assert!(room.playing);
+        assert!(room.position >= 50.0);
+        assert_eq!(room.host_id, new_id);
+    }
+
 }

@@ -14,17 +14,19 @@ function makePlayer(initialTime = 0) {
 }
 
 describe('useSyncEngine', () => {
-  it('ignores all commands when caller is host', () => {
+  it('applies the shared play command to the initiating host too', () => {
     const player = makePlayer()
     const { handleMessage } = useSyncEngine(player, ref(0))
+    handleMessage({ type: 'play', position: 100 })
+    expect(player.seekTo).toHaveBeenCalledWith(100)
+    expect(player.play).toHaveBeenCalledOnce()
+  })
 
-    handleMessage({ type: 'play', position: 100 }, true)
-    handleMessage({ type: 'pause', position: 100 }, true)
-    handleMessage({ type: 'seek', position: 100 }, true)
-
-    expect(player.play).not.toHaveBeenCalled()
-    expect(player.pause).not.toHaveBeenCalled()
-    expect(player.seekTo).not.toHaveBeenCalled()
+  it('compensates for latency at the current playback speed', () => {
+    const player = { ...makePlayer(), playbackRate: ref(2) }
+    const { handleMessage } = useSyncEngine(player, ref(400))
+    handleMessage({ type: 'play', position: 100 })
+    expect(player.seekTo).toHaveBeenCalledWith(100.4)
   })
 
   it('applies play with latency compensation', () => {

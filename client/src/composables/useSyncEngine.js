@@ -9,7 +9,7 @@ export function useSyncEngine(player, rtt, onDesync) {
     switch (msg.type) {
       case 'play': {
         // Compensate for network latency: advance position by half RTT
-        const latencyOffset = (rtt.value || 0) / 2000
+        const latencyOffset = (rtt.value || 0) / 2000 * (player.playbackRate?.value || 1)
         const targetPosition = msg.position + latencyOffset
         player.seekTo(targetPosition)
         player.play()

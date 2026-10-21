@@ -128,6 +128,7 @@ async fn websocket_create_and_join_room() {
     let state_msg = host_ws.next().await.unwrap().unwrap();
     let state: serde_json::Value = serde_json::from_str(&state_msg.into_text().unwrap()).unwrap();
     assert_eq!(state["type"], "room_state");
+    assert_eq!(state["created"], true);
     let room_id = state["room_id"].as_str().unwrap().to_string();
     assert_eq!(room_id, "abcd1234");
     assert_eq!(state["item"]["title"], "Test Book");
@@ -155,6 +156,7 @@ async fn websocket_create_and_join_room() {
     let guest_state: serde_json::Value =
         serde_json::from_str(&guest_msg.into_text().unwrap()).unwrap();
     assert_eq!(guest_state["type"], "room_state");
+    assert_eq!(guest_state["created"], false);
 
     // Host receives participant_joined notification
     let host_notif = host_ws.next().await.unwrap().unwrap();

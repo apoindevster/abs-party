@@ -24,8 +24,9 @@
             v-model="search"
             class="search"
             placeholder="Filter by title or author…"
+            aria-label="Search audiobooks"
           />
-          <select v-model="sort" class="sort-select" @change="onSortChange">
+          <select aria-label="Sort audiobooks" v-model="sort" class="sort-select" @change="onSortChange">
             <option value="progress">Last listened</option>
             <option value="media.metadata.title">Title</option>
             <option value="addedAt">Date added</option>
@@ -33,7 +34,7 @@
         </div>
 
         <div :class="['grid', { 'grid--loading': gridLoading }]">
-          <div
+          <button
             v-for="item in items"
             :key="item.id"
             class="book-card"
@@ -51,13 +52,13 @@
               <div class="book-title">{{ item.media?.metadata?.title || 'Unknown' }}</div>
               <div class="book-author">{{ item.media?.metadata?.authorName || '' }}</div>
             </div>
-          </div>
+          </button>
         </div>
 
         <div v-if="totalPages > 1 && !search" class="pagination">
-          <button :disabled="page === 0" @click="changePage(page - 1)">‹</button>
+          <button aria-label="Previous page" :disabled="page === 0" @click="changePage(page - 1)">‹</button>
           <span>{{ page + 1 }} / {{ totalPages }}</span>
-          <button :disabled="page >= totalPages - 1" @click="changePage(page + 1)">›</button>
+          <button aria-label="Next page" :disabled="page >= totalPages - 1" @click="changePage(page + 1)">›</button>
         </div>
       </template>
 
@@ -200,29 +201,44 @@ h2 { margin: 0; }
 .lib-tab { background: #16213e; border: 1px solid #0f3460; color: #ccc; padding: 0.35rem 0.9rem; border-radius: 20px; cursor: pointer; font-size: 0.85rem; }
 .lib-tab.active { background: #6c5ce7; border-color: #6c5ce7; color: #fff; }
 .toolbar { display: flex; gap: 0.75rem; margin-bottom: 1rem; }
-.search { flex: 1; padding: 0.6rem 0.75rem; border: 1px solid #0f3460; border-radius: 6px; background: #16213e; color: #fff; font-size: 1rem; }
+.search { min-width: 0; flex: 1; padding: 0.6rem 0.75rem; border: 1px solid #0f3460; border-radius: 6px; background: #16213e; color: #fff; font-size: 1rem; }
 .sort-select { padding: 0.6rem 0.75rem; border: 1px solid #0f3460; border-radius: 6px; background: #16213e; color: #ccc; font-size: 0.85rem; cursor: pointer; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 1rem; transition: opacity 0.15s; }
 .grid--loading { opacity: 0.4; pointer-events: none; }
-.book-card { background: #16213e; border-radius: 8px; overflow: hidden; cursor: pointer; transition: transform 0.15s; }
+.book-card { border: 0; padding: 0; text-align: left; font: inherit; background: #16213e; border-radius: 8px; overflow: hidden; cursor: pointer; transition: transform 0.15s; }
 .book-card:hover { transform: translateY(-3px); }
 .cover { width: 100%; aspect-ratio: 1; object-fit: cover; background: #0f3460; filter: blur(8px); opacity: 0; transition: filter 0.35s ease, opacity 0.35s ease; }
 .cover.loaded { filter: blur(0); opacity: 1; }
 .cover-placeholder { width: 100%; aspect-ratio: 1; background: #0f3460; display: flex; align-items: center; justify-content: center; font-size: 2.5rem; }
 .book-info { padding: 0.5rem; }
 .book-title { font-size: 0.8rem; font-weight: 600; color: #e0e0e0; line-height: 1.3; }
-.book-author { font-size: 0.75rem; color: #888; margin-top: 0.2rem; }
+.book-author { font-size: 0.75rem; color: #aaa; margin-top: 0.2rem; }
 .pagination { display: flex; align-items: center; gap: 1rem; justify-content: center; margin-top: 1.5rem; }
 .pagination button { background: #16213e; border: 1px solid #0f3460; color: #ccc; padding: 0.4rem 0.9rem; border-radius: 6px; cursor: pointer; }
 .pagination button:disabled { opacity: 0.4; cursor: default; }
-.status { text-align: center; color: #888; padding: 3rem; }
+.status { text-align: center; color: #aaa; padding: 3rem; }
 .error { color: #ff7675; }
-.room-name-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 100; }
-.overlay-card { background: #16213e; border-radius: 12px; padding: 2rem; width: 100%; max-width: 380px; }
+.room-name-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 1rem; overflow-y: auto; }
+.overlay-card { max-height: 100%; overflow-y: auto; background: #16213e; border-radius: 12px; padding: 2rem; width: 100%; max-width: 380px; }
 .overlay-card h3 { margin: 0 0 1rem; }
 .overlay-card label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; color: #aaa; margin-bottom: 1rem; }
 .overlay-card input { padding: 0.6rem 0.75rem; border: 1px solid #0f3460; border-radius: 6px; background: #0f3460; color: #fff; font-size: 1rem; }
 .overlay-actions { display: flex; gap: 0.75rem; }
 .overlay-actions button { flex: 1; padding: 0.65rem; border: none; border-radius: 6px; cursor: pointer; background: #2d3436; color: #ccc; }
 .overlay-actions .primary { background: #6c5ce7; color: #fff; }
+@media (max-width: 700px) {
+  .page { padding: 1rem; }
+  .picker-header { gap: 0.75rem; }
+  h2 { font-size: 1.25rem; }
+  .toolbar { flex-wrap: wrap; }
+  .search { flex-basis: 100%; }
+  .sort-select { width: 100%; font-size: 1rem; }
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
+  .book-title { font-size: 0.9rem; }
+  .book-author { font-size: 0.85rem; }
+  .overlay-card { padding: 1.5rem; }
+}
+@media (hover: none) {
+  .book-card:hover { transform: none; }
+}
 </style>

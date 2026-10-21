@@ -3,7 +3,7 @@
     <nav class="nav">
       <span class="nav-brand">🎧 ABS Party</span>
       <span v-if="auth.username" class="nav-user">
-        {{ auth.username }}
+        <span class="username">{{ auth.username }}</span>
         <button class="btn-sm" @click="logout">Logout</button>
       </span>
     </nav>
@@ -56,15 +56,24 @@ provide('ABS_BASE', props.absBaseUrl)
 <style scoped>
 .nav {
   display: flex;
+  flex-shrink: 0;
+  gap: 1rem;
   align-items: center;
   justify-content: space-between;
   padding: 0.75rem 1.5rem;
   background: #16213e;
   border-bottom: 1px solid #0f3460;
 }
-.app-root { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+.app-root { display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
 .app-content { flex: 1; overflow: hidden; min-height: 0; }
-.nav-brand { font-size: 1.2rem; font-weight: 700; color: #a29bfe; }
-.nav-user { display: flex; align-items: center; gap: 0.75rem; font-size: 0.9rem; }
+.nav-brand { white-space: nowrap; font-size: 1.2rem; font-weight: 700; color: #a29bfe; }
+.nav-user { min-width: 0; display: flex; align-items: center; gap: 0.75rem; font-size: 0.9rem; }
 .btn-sm { padding: 0.25rem 0.75rem; background: #6c5ce7; border: none; border-radius: 4px; color: #fff; cursor: pointer; font-size: 0.8rem; }
+.username { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 700px) {
+  .nav { padding: 0.5rem 1rem; }
+  .nav-brand { font-size: 1rem; }
+  .nav-user { gap: 0.5rem; }
+  .btn-sm { min-height: 44px; }
+}
 </style>

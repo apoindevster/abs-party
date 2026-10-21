@@ -8,10 +8,12 @@ pub enum ClientMessage {
     Join {
         room_id: Option<String>,
         abs_token: String,
+        resume_key: Option<Uuid>,
     },
     CreateRoom {
         room_id: String,
         abs_token: String,
+        resume_key: Option<Uuid>,
         item_id: String,
         item_title: String,
         item_author: String,
@@ -21,6 +23,8 @@ pub enum ClientMessage {
         position: f64,
     },
     Ready,
+    GetState,
+    Leave,
     Pause {
         position: f64,
     },
@@ -41,6 +45,7 @@ pub enum ClientMessage {
 pub enum ServerMessage {
     RoomState {
         room_id: String,
+        created: bool,
         item: ItemInfo,
         position: f64,
         playing: bool,

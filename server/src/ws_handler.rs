@@ -18,7 +18,7 @@ pub async fn handle_socket(socket: WebSocket, state: AppState) {
     let mut current_room: Option<String> = None;
 
     // Forward outbound messages from channel → websocket
-    tokio::spawn(async move {
+    let forwarder = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
             let text = match serde_json::to_string(&msg) {
                 Ok(t) => t,
@@ -48,7 +48,27 @@ pub async fn handle_socket(socket: WebSocket, state: AppState) {
         };
 
         match msg {
-            ClientMessage::Join { room_id, abs_token } => {
+            ClientMessage::Leave => {
+                if let Some(rid) = current_room.take() {
+                    hub::leave_room(&state.rooms, &rid, participant_id).await;
+                }
+                break;
+            }
+            ClientMessage::GetState => {
+                if let Some(ref rid) = current_room {
+                    if let Some(arc) = state.rooms.get(rid).map(|r| r.clone()) {
+                        let room = arc.lock().await;
+                        room.send_to(participant_id, room.state_message());
+                        if let Some(check) = &room.ready_check {
+                            room.send_to(participant_id, ServerMessage::PlayIntent {
+                                position: check.position,
+                                sender_name: String::new(),
+                            });
+                        }
+                    }
+                }
+            }
+            ClientMessage::Join { room_id, abs_token, resume_key } => {
                 let me = match validate_token(&state.abs, &abs_token, state.config.bypass_auth).await {
                     Ok(m) => m,
                     Err(e) => { let _ = tx.send(ServerMessage::Error { message: e }); continue; }
@@ -62,7 +82,7 @@ pub async fn handle_socket(socket: WebSocket, state: AppState) {
                     }
                 };
 
-                let participant = Participant { id: participant_id, name: me.username.clone(), abs_token, abs_username: me.username, tx: tx.clone() };
+                let participant = Participant { id: participant_id, name: me.username.clone(), abs_token, abs_username: me.username, resume_key, tx: tx.clone() };
 
                 match hub::join_room(&state.rooms, &rid, participant).await {
                     Ok(()) => current_room = Some(rid),
@@ -70,14 +90,14 @@ pub async fn handle_socket(socket: WebSocket, state: AppState) {
                 }
             }
 
-            ClientMessage::CreateRoom { room_id, abs_token, item_id, item_title, item_author, library_id } => {
+            ClientMessage::CreateRoom { room_id, abs_token, resume_key, item_id, item_title, item_author, library_id } => {
                 let me = match validate_token(&state.abs, &abs_token, state.config.bypass_auth).await {
                     Ok(m) => m,
                     Err(e) => { let _ = tx.send(ServerMessage::Error { message: e }); continue; }
                 };
 
                 let item = ItemInfo { id: item_id, library_id, title: item_title, author: item_author };
-                let participant = Participant { id: participant_id, name: me.username.clone(), abs_token, abs_username: me.username, tx: tx.clone() };
+                let participant = Participant { id: participant_id, name: me.username.clone(), abs_token, abs_username: me.username, resume_key, tx: tx.clone() };
 
                 match hub::create_room(&state.rooms, room_id.clone(), item, participant).await {
                     Ok(true) => {
@@ -85,7 +105,11 @@ pub async fn handle_socket(socket: WebSocket, state: AppState) {
                         current_room = Some(room_id.clone());
                         if let Some(arc) = state.rooms.get(&room_id).map(|r| r.clone()) {
                             let room = arc.lock().await;
-                            let _ = tx.send(room.state_message());
+                            let mut snapshot = room.state_message();
+                            if let ServerMessage::RoomState { created, .. } = &mut snapshot {
+                                *created = true;
+                            }
+                            let _ = tx.send(snapshot);
                         }
                     }
                     Ok(false) => {
@@ -129,8 +153,13 @@ pub async fn handle_socket(socket: WebSocket, state: AppState) {
         }
     }
 
+    forwarder.abort();
     if let Some(rid) = current_room {
-        hub::leave_room(&state.rooms, &rid, participant_id).await;
+        hub::disconnect_room(&state.rooms, &rid, participant_id).await;
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+            hub::expire_disconnect(&state.rooms, &rid, participant_id).await;
+        });
     }
 }
 

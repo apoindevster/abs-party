@@ -1,6 +1,6 @@
 # abs-party
 
-Synchronized audiobook listening for Audiobookshelf. Multiple people listen to the same book in real time: one person controls play, pause, seek, and speed; everyone else follows automatically.
+Synchronized audiobook listening for Audiobookshelf. Multiple people listen to the same book in real time: listeners share play, pause, and seek controls; the host can also change speed.
 
 Each listener streams audio directly from their own Audiobookshelf account and their progress is saved there independently. The party server is a lightweight sync bus only but proxies requests to avoid CORS issues.
 
@@ -31,6 +31,55 @@ When creating a room the host browses their ABS library. The picker supports:
 
 Switching sort mode and typing in the search box are coordinated: the active sort applies to search results, and changing the sort re-runs the current search query.
 
+
+## Mobile listening
+
+The interface adapts to phone screens, with larger touch targets and collapsible
+listeners, bookmarks, and room activity. Start playback with a tap before locking
+the phone. If the browser blocks playback, use **Tap to listen** to join the
+current room position. Use the phone's hardware buttons for volume; some mobile
+browsers do not allow web pages to change system volume.
+
+Where supported, the Media Session API supplies the book title, author, playback
+position, and play/pause/skip controls to the lock screen and headphones. These
+controls use the same shared room commands as the on-page buttons. Safari uses
+native HLS when available; other browsers fall back to hls.js. Serve both ABS Party
+and Audiobookshelf over HTTPS for phone use.
+
+Temporary disconnections retain the listener's seat and room playback for 30
+seconds. Reconnecting within that period restores the server's current position,
+play/pause state, and speed without pausing everyone. A per-connection resume key
+also handles network switches where the old socket has not closed yet. Choosing
+**Leave**, or navigating away within the app, leaves immediately. After the grace
+period, the existing behavior applies: leaving pauses the remaining listeners,
+and an empty room is removed. If the creator reconnects after the room has expired,
+the new room starts from that page’s local playback position.
+
+Background audio and background synchronization have different limits. Browsers
+and operating systems may suspend scripts or networking while locked, especially
+after playback pauses. Returning to the page requests fresh room state. Media
+Session integration does not guarantee that remote commands can wake a suspended
+page, and closing the tab ends playback. Multi-file track transitions also need
+real-device testing.
+
+### Mobile verification before release
+
+Run `npm test` and `npm run build` in `client`, and `cargo test --locked` in
+`server`. Automated tests cover blocked playback, native HLS selection, multi-file
+seeking, system control handlers, socket recovery, and room reconnection.
+
+Physical-device verification is still required on both iPhone Safari and Android
+Chrome, using a real Audiobookshelf server over HTTPS:
+
+- Join as host and guest, tap to listen, then lock each phone for 10–15 minutes.
+- Try lock-screen/headphone play, pause, and skip; check the other listener follows.
+- Cross a file boundary while locked with both direct-play and HLS books.
+- Pause remotely while locked, wait, then resume remotely; check for browser
+  suspension and verify recovery on returning to the page.
+- Switch between Wi-Fi and cellular, briefly disconnect, then return. Verify
+  position and speed, no duplicate listeners, and no unintended group pause.
+- Check portrait/landscape, a small phone, the software keyboard, seeking by touch,
+  and scrolling past the player. Test calls or other audio interrupting playback.
 
 ## Security notes
 
@@ -130,6 +179,8 @@ Client to server:
 { "type": "seek",        "position": 1234.5 }
 { "type": "speed",       "rate": 1.25 }
 { "type": "ping",        "sent_at": 1719000000000 }
+{ "type": "get_state" }
+{ "type": "leave" }
 ```
 
 Server to client:
@@ -147,4 +198,17 @@ Server to client:
 { "type": "error",             "message": "..." }
 ```
 
-Only the host (room creator, or whoever took over after the host left) may send play/pause/seek/speed. Guest attempts are silently dropped by the server.
+`create_room` and `join` optionally accept a `resume_key` UUID generated for that
+page's connection. After ABS authentication, the same account and key can replace
+its old connection. Other active duplicate logins are rejected. Keep this key
+private to the page; it is not a room invite code.
+
+`room_state.created` is true only for the response to creating a new room; other
+snapshots set it to false. This lets the creator seed a new room from its own
+progress without overwriting the position of an existing room.
+
+`get_state` returns the current `room_state` (and a pending `play_intent`, if any)
+without joining again. `leave` removes the listener immediately. A socket closing
+without `leave` starts the 30-second reconnection grace period.
+
+Any listener may send play intent, pause, or seek. Only the host may change speed.

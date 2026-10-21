@@ -2,12 +2,25 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>ABS Party</title>
     <style>
       *, *::before, *::after { box-sizing: border-box; }
       body { margin: 0; font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; }
       a { color: #a29bfe; }
+      button, input, select, summary { -webkit-tap-highlight-color: transparent; }
+      button, summary { touch-action: manipulation; }
+      button, input, select { font-family: inherit; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      :focus-visible { outline: 2px solid #b9b3ff; outline-offset: 3px; }
+      ::selection { background: #6c5ce7; color: #fff; }
+      @media (pointer: coarse) {
+        button, summary, input, select { min-height: 44px; }
+        input, select { font-size: 16px !important; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { transition: none !important; }
+      }
     </style>
   </head>
   <body>
